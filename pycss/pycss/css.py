@@ -2,7 +2,7 @@ import numpy as np
 from numba import njit, prange
 from time import time
 from datetime import timedelta
-import sim
+import pycss.sim as sim
 
 
 def css_varpro(imDataParams, options):
@@ -17,15 +17,16 @@ def css_varpro(imDataParams, options):
     mask = options['mask']
 
     TE_s = imDataParams['TE_s'].ravel()
-    signal = imDataParams['signal']
+    signal = imDataParams['signal'].astype(np.complex128)
     sz = signal.shape[:3]
     Sig = signal.reshape((np.prod(sz), signal.shape[-1]))[mask.ravel(), :]
     assert Sig.shape[0] == options['Pm0'].shape[0]
 
-    Cm = options['Cm']
-    Cp = options['Cp']
-    Cf = options['Cf']
-    Cr = options['Cr']
+    C_rho = options['Cm']
+    C_phi = options['Cp']
+    C_w = options['Cf']
+    C_R = options['Cr']
+    pos_constraint = options['pos_constraint']
 
     if verbose:
         print('Varpro: Start loop over all voxels.', end=' ')
@@ -33,24 +34,29 @@ def css_varpro(imDataParams, options):
     Pme, Resnorm, Iterations = map_varpro(TE_s,
                                           Sig,
                                           options['Pm0'],
-                                          Cm, Cp, Cf, Cr,
+                                          C_rho, C_phi, C_w, C_R,
                                           options['tol'],
-                                          int(options['itermax']))
+                                          int(options['itermax']),
+                                          pos_constraint)
+
+    if pos_constraint:
+        Pme[:, 3:] = np.log(Pme[:, 3:])
+
     elapsed_s = time() - t
     if verbose:
         print(f'Done. Elapsed time: {str(timedelta(seconds=elapsed_s)):.10}')
 
-    maps = construct_param_maps(Pme, [Cm, Cp, Cf, Cr], mask)
+    maps = construct_param_maps(Pme, [C_rho, C_phi, C_w, C_R], mask)
 
     output_dict = {'params_matrices': Pme,
                    'param_maps': construct_param_maps(Pme,
-                                                      [Cm, Cp, Cf, Cr], mask),
+                                                      [C_rho, C_phi, C_w, C_R], mask),
                    'resnorm': construct_map(Resnorm, mask),
                    'iterations': construct_map(Iterations, mask),
                    'elapsed_time_s': elapsed_s}
 
     if options.get('uncertainty_quant', False):
-        output_dict.update(compute_FIMmaps(TE_s, Pme, Cm, Cp, Cf, Cr, mask))
+        output_dict.update(compute_FIMmaps(TE_s, Pme, C_rho, C_phi, C_w, C_R, mask))
 
     return output_dict
 
@@ -69,7 +75,7 @@ def extract_variables(Pm, constraints_matrices):
         C = Cs[iptype]
         for ivar in range(C.shape[-1]):
             isNonzero = list(C[:, ivar] != 0)
-            pmn[..., isNonzero, iptype] /=  C[..., isNonzero, ivar]
+            pmn[..., isNonzero, iptype] /= C[..., isNonzero, ivar]
 
         indVars = np.where(np.diag(C.T.dot(C)))[0]
         for ind in indVars:
@@ -84,9 +90,9 @@ def construct_map(vals1D, mask):
     return map_.reshape(mask.shape)
 
 
-def compute_FIMmaps(TE_s, Pm, Cm, Cp, Cf, Cr, mask):
+def compute_FIMmaps(TE_s, Pm, C_rho, C_phi, C_w, C_R, mask):
     CRLBs, NSAs, Invariants, FIMs, FIMinvs = \
-        sim.compute_FIMparams(TE_s, Pm, Cm, Cp, Cf, Cr)
+        sim.compute_FIMparams(TE_s, Pm, C_rho, C_phi, C_w, C_R)
     n = CRLBs.shape[-1]
     return {'CRLBs': np.array([construct_map(CRLBs[:, i], mask)
                                 for i in range(n)]),
@@ -98,17 +104,17 @@ def compute_FIMmaps(TE_s, Pm, Cm, Cp, Cf, Cr, mask):
 
 
 @njit(parallel=True)
-def map_varpro(TE_s, Sig, Pm, Cm, Cp, Cf, Cr, tol, itermax):
+def map_varpro(TE_s, Sig, Pm, C_rho, C_phi, C_w, C_R, tol, itermax, pos_constraint=None):
     """map varpro solver for all voxels list of MR signals
 
     :param TE_s: 1d np.array, with echo times in seconds
     :param Sig: 2d np.ndarray,  measured complex MR signal for all voxels
                 shape # voxel x # TE's
     :param Pm: 2d np.ndarray, parameter matrix of dimension #species x 4
-    :param Cm: 2d np.ndarray, constraints matrix for magnitudes
-    :param Cp: 2d np.ndarray, constraints matrix for phases
-    :param Cf: 2d np.ndarray, constraints matrix for resonance frequencies
-    :param Cr: 2d np.ndarray, constraints matrix for relaxation rates
+    :param C_rho: 2d np.ndarray, constraints matrix for magnitudes
+    :param C_phi: 2d np.ndarray, constraints matrix for phases
+    :param C_w: 2d np.ndarray, constraints matrix for resonance frequencies
+    :param C_R: 2d np.ndarray, constraints matrix for relaxation rates
     :param tol: float, desired precision on the residual
     :param itermax: int, maximal number of iterations
     :returns: parameter matrix array, residual, # of iterations
@@ -129,8 +135,8 @@ def map_varpro(TE_s, Sig, Pm, Cm, Cp, Cf, Cr, tol, itermax):
         pm = Pm[i, ...].reshape(Pm.shape[1:])
 
         # apply func
-        pm, resnorm, iterations = varpro(TE_s, sig, pm,
-                                         Cm, Cp, Cf, Cr, tol, itermax)
+        pm, resnorm, iterations = varpro(TE_s, sig, pm, C_rho, C_phi, C_w, C_R,
+                                         tol, itermax, pos_constraint)
 
         # assign voxel output to array result
         Pm[i, ...] = pm
@@ -141,49 +147,54 @@ def map_varpro(TE_s, Sig, Pm, Cm, Cp, Cf, Cr, tol, itermax):
 
 
 @njit
-def varpro(TE_s, sig, pm, Cm, Cp, Cf, Cr, tol, itermax):
+def varpro(TE_s, sig, pm, C_rho, C_phi, C_w, C_R, tol, itermax, pos_constraint=None):
     """solve chemical species separation by VARPRO,
     the variable projection method
 
     :param TE_s: 1d np.array, with echo times in seconds
     :param sig: 1d np.array, measured complex MR signal
     :param pm: 2d np.ndarray, parameter matrix of dimension #species x 4
-    :param Cm: 2d np.ndarray, constraints matrix for magnitudes
-    :param Cp: 2d np.ndarray, constraints matrix for phases
-    :param Cf: 2d np.ndarray, constraints matrix for resonance frequencies
-    :param Cr: 2d np.ndarray, constraints matrix for relaxation rates
+    :param C_rho: 2d np.ndarray, constraints matrix for magnitudes
+    :param C_phi: 2d np.ndarray, constraints matrix for phases
+    :param C_w: 2d np.ndarray, constraints matrix for resonance frequencies
+    :param C_R: 2d np.ndarray, constraints matrix for relaxation rates
     :param tol: float, desired precision on the residual
     :param itermax: int, maximal number of iterations
     :returns: parameter matrix, residual, # of iterations
     :rtype: tuple (float, float, int)
 
     """
-    Cm = Cm.astype(np.float64)
-    Cmc = Cm.astype(np.complex128)
-    Cp = Cp.astype(np.float64)
-    Cf = Cf.astype(np.float64)
-    Cr = Cr.astype(np.float64)
-    M, Ntot, Nm, Np, Nf, Nr = get_paramsCount(Cm, Cp, Cf, Cr)
+    C_rho = C_rho.astype(np.float64)
+    C_rho_c = C_rho.astype(np.complex128)
+    C_phi = C_phi.astype(np.float64)
+    C_phi_c = np.zeros_like(C_rho_c)
+    C_phi_c[:, :C_phi.shape[-1]] = C_phi.astype(np.complex128)
+    C_w = C_w.astype(np.float64)
+    C_R = C_R.astype(np.float64)
+    M, Ntot, Nm, Np, Nf, Nr = get_paramsCount(C_rho, C_phi, C_w, C_R)
 
     eps = 2 * tol
     i = 0
-    cond_thres = 1e6
+    cond_thres = 1e20
 
     while eps > tol and i < itermax:
         # update linear parameters
-        A = get_Amatrix(TE_s, pm)
+        A = get_Amatrix(TE_s, pm, pos_constraint)
         if np.isnan(A).any() or np.isinf(A).any():
             break
         if np.linalg.cond(A) > cond_thres:
             break
-        rho = np.linalg.lstsq(np.dot(A, Cmc), sig, rcond=-1)[0]
-        Cm_rho = np.dot(Cmc, rho)
+        # print(np.dot(A, C_rho_c).dtypem sig.dtype)
+        rho = np.linalg.lstsq(np.dot(A, C_rho_c), sig, rcond=-1)[0]
+
+        Cm_rho = np.dot(C_rho_c, rho)
+        Cm_phi = np.dot(C_phi_c, rho)
         pm[:, 0] = np.abs(Cm_rho)
-        pm[:, 1] = np.angle(Cm_rho)
+        pm[:, 1] = np.angle(Cm_phi)
 
         # update nonlinear parameters
-        r = sig - build_signal(TE_s, pm)
-        J = get_Jacobian(TE_s, pm, Cm, Cp, Cf, Cr)
+        r = sig - build_signal(TE_s, pm, pos_constraint)
+        J = get_Jacobian(TE_s, pm, C_rho, C_phi, C_w, C_R, pos_constraint)
         rr = np.concatenate((r.real, r.imag), axis=0)
         JJ = np.concatenate((J.real, J.imag), axis=0)
         if np.isnan(JJ).any() or np.isinf(JJ).any():
@@ -194,95 +205,94 @@ def varpro(TE_s, sig, pm, Cm, Cp, Cf, Cr, tol, itermax):
         eps = np.linalg.norm(updates)  # for convergence criterium
 
         pm_update = np.zeros_like(pm)
-        pm_update[:, 1] = np.dot(Cp, updates[Nm:Nm+Np])
-        pm_update[:, 2] = np.dot(Cf, updates[Nm+Np:Nm+Np+Nf])
-        pm_update[:, 3] = np.dot(Cr, updates[Nm+Np+Nf:Nm+Np+Nf+Nr])
+        pm_update[:, 1] = np.dot(C_phi, updates[Nm:Nm+Np])
+        pm_update[:, 2] = np.dot(C_w, updates[Nm+Np:Nm+Np+Nf])
+        pm_update[:, 3] = np.dot(C_R, updates[Nm+Np+Nf:Nm+Np+Nf+Nr])
         pm += pm_update
 
         i += 1
 
-    resnorm = np.linalg.norm(sig - build_signal(TE_s, pm)) # residual norm
+    resnorm = np.linalg.norm(sig - build_signal(TE_s, pm, pos_constraint)) # residual norm
 
     return pm, resnorm, i
 
 
-def varpro_iter(TE_s, sig, pm, Cm, Cp, Cf, Cr, tol, itermax):
-    """solve chemical species separation (IDEAL or VARPRO) by tracking
+# def varpro_iter(TE_s, sig, pm, C_rho, C_phi, C_w, C_R, tol, itermax):
+#     """solve chemical species separation (IDEAL or VARPRO) by tracking
 
-    :param TE_s: 1d np.array, with echo times in seconds
-    :param sig: 1d np.array, measured complex MR signal
-    :param pm: 2d np.ndarray, parameter matrix of dimension #species x 4
-    :param Cm: 2d np.ndarray, constraints matrix for magnitudes
-    :param Cp: 2d np.ndarray, constraints matrix for phases
-    :param Cf: 2d np.ndarray, constraints matrix for resonance frequencies
-    :param Cr: 2d np.ndarray, constraints matrix for relaxation rates
-    :param tol: float, desired precision on the residual
-    :param itermax: int, maximal number of iterations
-    :param varpro: bool, wether VARPRO or IDEAL is used
-    :returns: parameter matrix, residual, # of iterations
-    :rtype: tuple (float, float, int)
+#     :param TE_s: 1d np.array, with echo times in seconds
+#     :param sig: 1d np.array, measured complex MR signal
+#     :param pm: 2d np.ndarray, parameter matrix of dimension #species x 4
+#     :param C_rho: 2d np.ndarray, constraints matrix for magnitudes
+#     :param C_phi: 2d np.ndarray, constraints matrix for phases
+#     :param C_w: 2d np.ndarray, constraints matrix for resonance frequencies
+#     :param C_R: 2d np.ndarray, constraints matrix for relaxation rates
+#     :param tol: float, desired precision on the residual
+#     :param itermax: int, maximal number of iterations
+#     :param varpro: bool, wether VARPRO or IDEAL is used
+#     :returns: parameter matrix, residual, # of iterations
+#     :rtype: tuple (float, float, int)
 
-    """
-    Cm = Cm.astype(np.float64)
-    Cmc = Cm.astype(np.complex128)
-    Cp = Cp.astype(np.float64)
-    Cf = Cf.astype(np.float64)
-    Cr = Cr.astype(np.float64)
-    M, Ntot, Nm, Np, Nf, Nr = get_paramsCount(Cm, Cp, Cf, Cr)
+#     """
+#     C_rho = C_rho.astype(np.float64)
+#     C_rho_c = C_rho.astype(np.complex128)
+#     C_phi = C_phi.astype(np.float64)
+#     C_w = C_w.astype(np.float64)
+#     C_R = C_R.astype(np.float64)
+#     M, Ntot, Nm, Np, Nf, Nr = get_paramsCount(C_rho, C_phi, C_w, C_R)
 
-    resnorm_iter = np.zeros(itermax)
-    eps_iter = np.zeros(itermax)
-    pm_iter = np.zeros((itermax+1, Cm.shape[0], 4))
-    pm_iter[0, :, :] = pm
+#     resnorm_iter = np.zeros(itermax)
+#     eps_iter = np.zeros(itermax)
+#     pm_iter = np.zeros((itermax+1, C_rho.shape[0], 4))
+#     pm_iter[0, :, :] = pm
 
-    eps = 2 * tol
-    i = 1
-    cond_thres = 1e6
+#     eps = 2 * tol
+#     i = 1
+#     cond_thres = 1e6
 
-    while eps > tol and i < itermax:
-        # update linear parameters
-        # import pdb; pdb.set_trace()
+#     while eps > tol and i < itermax:
+#         # update linear parameters
 
-        A = get_Amatrix(TE_s, pm)
-        if np.isnan(A).any() or np.isinf(A).any():
-            break
-        if np.linalg.cond(A) > cond_thres:
-            break
-        rho = np.linalg.lstsq(np.dot(A, Cmc), sig, rcond=-1)[0]
-        Cm_rho = np.dot(Cmc, rho)
-        pm[:, 0] = np.abs(Cm_rho)
-        pm[:, 1] = np.angle(Cm_rho)
+#         A = get_Amatrix(TE_s, pm)
+#         if np.isnan(A).any() or np.isinf(A).any():
+#             break
+#         if np.linalg.cond(A) > cond_thres:
+#             break
+#         rho = np.linalg.lstsq(np.dot(A, C_rho_c), sig, rcond=-1)[0]
+#         Cm_rho = np.dot(C_rho_c, rho)
+#         pm[:, 0] = np.abs(Cm_rho)
+#         pm[:, 1] = np.angle(Cm_rho)
 
-        # update nonlinear parameters
-        r = sig - build_signal(TE_s, pm)
-        J = get_Jacobian(TE_s, pm, Cm, Cp, Cf, Cr)
-        rr = np.concatenate((r.real, r.imag), axis=0)
-        JJ = np.concatenate((J.real, J.imag), axis=0)
-        if np.isnan(JJ).any() or np.isinf(JJ).any():
-            break
-        if np.linalg.cond(JJ) > cond_thres:
-            break
-        updates = np.linalg.lstsq(JJ, rr, rcond=-1)[0]
-        eps = np.linalg.norm(updates)  # for convergence criterium
+#         # update nonlinear parameters
+#         r = sig - build_signal(TE_s, pm)
+#         J = get_Jacobian(TE_s, pm, C_rho, C_phi, C_w, C_R)
+#         rr = np.concatenate((r.real, r.imag), axis=0)
+#         JJ = np.concatenate((J.real, J.imag), axis=0)
+#         if np.isnan(JJ).any() or np.isinf(JJ).any():
+#             break
+#         if np.linalg.cond(JJ) > cond_thres:
+#             break
+#         updates = np.linalg.lstsq(JJ, rr, rcond=-1)[0]
+#         eps = np.linalg.norm(updates)  # for convergence criterium
 
-        pm_update = np.zeros_like(pm)
-        pm_update[:, 1] = np.dot(Cp, updates[Nm:Nm+Np])
-        pm_update[:, 2] = np.dot(Cf, updates[Nm+Np:Nm+Np+Nf])
-        pm_update[:, 3] = np.dot(Cr, updates[Nm+Np+Nf:Nm+Np+Nf+Nr])
-        pm += pm_update
+#         pm_update = np.zeros_like(pm)
+#         pm_update[:, 1] = np.dot(C_phi, updates[Nm:Nm+Np])
+#         pm_update[:, 2] = np.dot(C_w, updates[Nm+Np:Nm+Np+Nf])
+#         pm_update[:, 3] = np.dot(C_R, updates[Nm+Np+Nf:Nm+Np+Nf+Nr])
+#         pm += pm_update
 
-        resnorm_iter[i] = np.linalg.norm(sig - build_signal(TE_s, pm))
-        eps = np.linalg.norm(updates)
-        eps_iter[i] = eps
-        pm_iter[i, :, :] = pm
+#         resnorm_iter[i] = np.linalg.norm(sig - build_signal(TE_s, pm))
+#         eps = np.linalg.norm(updates)
+#         eps_iter[i] = eps
+#         pm_iter[i, :, :] = pm
 
-        i += 1
+#         i += 1
 
-    return pm_iter[:i], resnorm_iter[:i], eps_iter[:i]
+#     return pm_iter[:i], resnorm_iter[:i], eps_iter[:i]
 
 
 @njit
-def get_Amatrix(TE_s, pm):
+def get_Amatrix(TE_s, pm, pos_constraint=None):
     """set up A matrix from voxel signal equation
     of dimension #echoes x #species
 
@@ -293,13 +303,18 @@ def get_Amatrix(TE_s, pm):
 
     """
     A = np.zeros((len(TE_s), pm.shape[0]), dtype=np.complex128)
-    for i in range(A.shape[1]):
-        A[:, i] = np.exp((2j * np.pi * pm[i, 2] - pm[i, 3]) * TE_s)
+    if pos_constraint:
+        for i in range(A.shape[1]):
+            A[:, i] = np.exp((2j * np.pi * pm[i, 2] - np.exp(pm[i, 3])) * TE_s)
+    else:
+        for i in range(A.shape[1]):
+            A[:, i] = np.exp((2j * np.pi * pm[i, 2] - pm[i, 3]) * TE_s)
+
     return A
 
 
 @njit
-def build_signal(TE_s, pm):
+def build_signal(TE_s, pm, pos_constraint=None):
     """forward simulate MR signal at echo times TE_s
 
     :param TE_s: 1d np.array, with echo times in seconds
@@ -309,33 +324,33 @@ def build_signal(TE_s, pm):
 
     """
     rho = pm[:, 0] * np.exp(1.j * pm[:, 1])
-    A = get_Amatrix(TE_s, pm)
+    A = get_Amatrix(TE_s, pm, pos_constraint)
     return np.dot(A, rho.astype(A.dtype))
 
 
 @njit
-def get_Jacobian(TE_s, pm, Cm, Cp, Cf, Cr):
+def get_Jacobian(TE_s, pm, C_rho, C_phi, C_w, C_R, pos_constraint=None):
     """compute Jacobian
 
     :param TE_s: 1d np.array, with echo times in seconds
     :param pm: 2d np.ndarray, parameter matrix of dimension #species x 4
-    :param Cm: 2d np.ndarray, constraints matrix for magnitudes
-    :param Cp: 2d np.ndarray, constraints matrix for phases
-    :param Cf: 2d np.ndarray, constraints matrix for resonance frequencies
-    :param Cr: 2d np.ndarray, constraints matrix for relaxation rates
+    :param C_rho: 2d np.ndarray, constraints matrix for magnitudes
+    :param C_phi: 2d np.ndarray, constraints matrix for phases
+    :param C_w: 2d np.ndarray, constraints matrix for resonance frequencies
+    :param C_R: 2d np.ndarray, constraints matrix for relaxation rates
     :returns: Jacobian
     :rtype: complex 2d np.array
 
     """
-    A = get_Amatrix(TE_s, pm)
+    A = get_Amatrix(TE_s, pm, pos_constraint)
     P = np.diag(np.exp(1.j * pm[:, 1]))
     D = np.diag(pm[:, 0] * np.exp(1.j * pm[:, 1]))
     AD = np.dot(A, D.astype(A.dtype))
     T = np.diag(TE_s).astype(A.dtype)
-    Jm = np.dot(np.dot(A, P), Cm.astype(A.dtype))
-    Jp = 1.j * np.dot(AD, Cp.astype(A.dtype))
-    Jf = 2.j * np.pi * np.dot(T, np.dot(AD, Cf.astype(AD.dtype)))
-    Jr = -np.dot(T, np.dot(AD, Cr.astype(AD.dtype)))
+    Jm = np.dot(np.dot(A, P), C_rho.astype(A.dtype))
+    Jp = 1.j * np.dot(AD, C_phi.astype(A.dtype))
+    Jf = 2.j * np.pi * np.dot(T, np.dot(AD, C_w.astype(AD.dtype)))
+    Jr = -np.dot(T, np.dot(AD, C_R.astype(AD.dtype)))
     # return np.c_[Jm, Jp, Jf, Jr]  # not possible for njit
     Jm = np.atleast_2d(Jm.T).T  # hack to get same number of dimensions
     Jp = np.atleast_2d(Jp.T).T  # needed for hstack
@@ -364,65 +379,65 @@ def add_noise(signal, SNR):
 
 
 @njit
-def get_paramsCount(Cm, Cp, Cf, Cr):
+def get_paramsCount(C_rho, C_phi, C_w, C_R):
     """count how many free variables are ought to be solved
 
-    :param Cm: 2d np.ndarray, constraints matrix for magnitudes
-    :param Cp: 2d np.ndarray, constraints matrix for phases
-    :param Cf: 2d np.ndarray, constraints matrix for resonance frequencies
-    :param Cr: 2d np.ndarray, constraints matrix for relaxation rates
+    :param C_rho: 2d np.ndarray, constraints matrix for magnitudes
+    :param C_phi: 2d np.ndarray, constraints matrix for phases
+    :param C_w: 2d np.ndarray, constraints matrix for resonance frequencies
+    :param C_R: 2d np.ndarray, constraints matrix for relaxation rates
     :returns: # all variable, # magnitudes, # phases, # freqs, # relaxations
     :rtype: tuple of ints
 
     """
-    assert Cm.shape[0] == Cp.shape[0] == Cf.shape[0] == Cr.shape[0]
-    Nm = Cm.shape[-1]
-    Np = Cp.shape[-1]
-    Nf = Cf.shape[-1]
-    Nr = Cr.shape[1]
-    M = Cm.shape[0]
+    assert C_rho.shape[0] == C_phi.shape[0] == C_w.shape[0] == C_R.shape[0]
+    Nm = C_rho.shape[-1]
+    Np = C_phi.shape[-1]
+    Nf = C_w.shape[-1]
+    Nr = C_R.shape[1]
+    M = C_rho.shape[0]
     Ntot = Nm + Np + Nf + Nr
     return M, Ntot, Nm, Np, Nf, Nr
 
 
-def get_params(pm, Cm, Cp, Cf, Cr):
+def get_params(pm, C_rho, C_phi, C_w, C_R):
     """FIXME extract variable parameters from paramter matrix based on the
     constraint matrices
 
     :param pm:
-    :param Cm:
-    :param Cp:
-    :param Cf:
-    :param Cr:
+    :param C_rho:
+    :param C_phi:
+    :param C_w:
+    :param C_R:
     :returns:
     :rtype: 1d np.array
 
     """
-    _, Ntot, Nm, Np, Nf, Nr = get_paramsCount(Cm, Cp, Cf, Cr)
+    _, Ntot, Nm, Np, Nf, Nr = get_paramsCount(C_rho, C_phi, C_w, C_R)
     return np.r_[pm[0:Nm, 0],
                  pm[Nm:Nm+Np, 1],
                  pm[Nm+Np:Nm+Np+Nf, 2],
                  pm[Nm+Np+Nf:Nm+Np+Nf+Nr, 3]]
 
 
-def set_params(beta, pm, Cm, Cp, Cf, Cr):
+def set_params(beta, pm, C_rho, C_phi, C_w, C_R):
     """FIXME according to constraint matrices C[mpfr]
     set variables beta in the parameter matrix pm
 
     :param beta:
     :param pm:
-    :param Cm:
-    :param Cp:
-    :param Cf:
-    :param Cr:
+    :param C_rho:
+    :param C_phi:
+    :param C_w:
+    :param C_R:
     :returns:
     :rtype:
 
     """
     deshielding_Hz = np.concatenate(([0], pm[1:, 2] - pm[0, 2]))
-    _, Ntot, Nm, Np, Nf, Nr = get_paramCounts(Cm, Cp, Cf, Cr)
-    pm[:, 0] = np.dot(Cm, beta[0:Nm])
-    pm[:, 1] = np.dot(Cp, beta[Nm:Nm+Np])
-    pm[:, 2] = np.dot(Cf, *beta[Nm+Np:Nm+Np+Nf]) + deshielding_Hz
-    pm[:, 3] = np.dot(Cr, *beta[Nm+Np+Nf:Nm+Np+Nf+Nr])
+    _, Ntot, Nm, Np, Nf, Nr = get_paramsCount(C_rho, C_phi, C_w, C_R)
+    pm[:, 0] = np.dot(C_rho, beta[0:Nm])
+    pm[:, 1] = np.dot(C_phi, beta[Nm:Nm+Np])
+    pm[:, 2] = np.dot(C_w, *beta[Nm+Np:Nm+Np+Nf]) + deshielding_Hz
+    pm[:, 3] = np.dot(C_R, *beta[Nm+Np+Nf:Nm+Np+Nf+Nr])
     return pm

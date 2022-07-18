@@ -3,11 +3,9 @@ import scipy.linalg as la
 from numba import njit, prange
 import matplotlib.pyplot as plt
 from copy import deepcopy
-import utils.customio as io
-from Fatmodel import Fatmodel
-import css
+from pycss.Fatmodel import Fatmodel
+import pycss.css as css
 import time
-
 
 def wfi_css_varpro(imDataParams, options=None):
 
@@ -19,12 +17,17 @@ def wfi_css_varpro(imDataParams, options=None):
 
     # adjust imDataParams
     TE_s = imDataParams['TE_s'].ravel()
-    iTE = options.get('iTE', slice(0, len(TE_s)))
+    iTE = options.get('iTE', list(np.arange(0, len(TE_s))))
     imDataParams['TE_s'] = TE_s[iTE]
 
     signal = imDataParams['signal']
-    iSlice = options.get('iSlice', slice(0, signal.shape[2]))
-    imDataParams['signal'] = signal[:, :, iSlice, iTE]
+    iSlice = list(options.get('iSlice', np.arange(0, signal.shape[2])).astype(np.int))
+    if len(iSlice) == 1:
+        imDataParams['signal'] = signal[:, :, iSlice[0]:iSlice[0]+1, iTE]
+    else:
+        tmpsignal = signal[:,:,iSlice,:]
+        imDataParams['signal'] = tmpsignal[:,:,:,iTE]
+        # imDataParams['signal'] = signal[:, :, iSlice, iTE]
 
     # default options
     mask = calculate_tissue_mask(imDataParams['signal'],
@@ -36,8 +39,7 @@ def wfi_css_varpro(imDataParams, options=None):
     else:
         init_fieldmap_Hz = init_fieldmap_Hz[:, :, iSlice]
 
-    F = Fatmodel()
-    F.set_fatmodel(options.get('fatmodel', 'Berglund 10 peaks'))
+    F = Fatmodel(modelname = options.get('fatmodel', 'Berglund 10 peaks'))
     F.compute_fatmodel(cl=options.get('cl', 18.5),
                        ndb=options.get('ndb', 2.73,),
                        nmidb=options.get('nmidb', 0.76))
@@ -51,8 +53,8 @@ def wfi_css_varpro(imDataParams, options=None):
                        'Cf': F.Cf,
                        'Cr': F.Cr,
                        'Pm0': Pm0,
-                       'tol': 1e-6,
-                       'itermax': 100,
+                       'tol': options['tol'],
+                       'itermax': 40,
                        'verbose': True}
     default_options.update(options)
     options = default_options
@@ -84,6 +86,12 @@ def structure_param_maps(param_maps, constrained_matrices):
         model_dict['water'] = param_maps[0] * np.exp(1.j * param_maps[2])
         model_dict['fat'] = param_maps[1] * np.exp(1.j * param_maps[3])
         nextind = 4
+    elif Np == 3:
+        model_dict['model_desc'] = '(unconstrained phase), '
+        model_dict['water'] = param_maps[0] * np.exp(1.j * param_maps[3])
+        model_dict['fat'] = param_maps[2] * np.exp(1.j * param_maps[5])
+        model_dict['silicone'] = param_maps[1] * np.exp(1.j * param_maps[4])
+        nextind = 6
     else:
         print('unknown model')
         return model_dict
@@ -101,13 +109,18 @@ def structure_param_maps(param_maps, constrained_matrices):
         print('unknown model')
         return model_dict
 
-    model_dict['pdff_percent'] = \
-        calculate_pdff_percent(model_dict['water'], model_dict['fat'])
+    if Np == 3:
+        model_dict['pdff_percent'] = \
+            calculate_pdff_percent(model_dict['water'], model_dict['fat'],
+                                   model_dict['silicone'])
+    else:
+        model_dict['pdff_percent'] = \
+            calculate_pdff_percent(model_dict['water'], model_dict['fat'])
 
     return model_dict
 
 
-@njit
+# @njit
 def build_Pm0(chemical_shifts_Hz, fieldmap_Hz):
     fieldmap_Hz = fieldmap_Hz.ravel()
     nVoxel = len(fieldmap_Hz)
@@ -133,15 +146,19 @@ def equalize_fieldmap_periods(fieldmap_Hz, TE_s):
     return fieldmap_Hz - period_length * np.tile(nperiods, [sz[0], sz[1], 1])
 
 
-def calculate_pdff_percent(W, F):
-    WF = np.abs(W + F)
-    Wr = np.divide(np.abs(W), WF, out=np.zeros_like(WF), where=WF!=0)
+def calculate_pdff_percent(W, F, S=None):
+    if S is None:
+        WF = np.abs(W + F)
+        wf = np.abs(W) + np.abs(F)
+        Wr = np.divide(np.abs(W), WF, out=np.zeros_like(WF), where=WF!=0)
+    else:
+        WF = np.abs(W + F + S)
+        wf = np.abs(W) + np.abs(F) + np.abs(S)
+        Wr = np.divide(np.abs(W + S), WF, out=np.zeros_like(WF), where=WF!=0)
     Fr = np.divide(np.abs(F), WF, out=np.zeros_like(WF), where=WF!=0)
-    wf = np.abs(W) + np.abs(F)
     pdff_abs = 100 * np.divide(np.abs(F), wf,
                                out=np.zeros_like(wf), where=wf!=0)
     return 100 * np.where((0 < pdff_abs) & (pdff_abs <= 50), (1 - Wr), Fr)
-
 
 def calculate_echoMIP(signal):
     return np.abs(signal).sum(-1)

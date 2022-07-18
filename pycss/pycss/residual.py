@@ -1,9 +1,9 @@
 import numpy as np
 from numba import njit, jit
-import nbutils
-from nbutils import ind2sub, sub2ind, list_multi_indexes, find_local_minima
-import sim
-import css
+import pycss.nbutils as nbutils
+from pycss.nbutils import ind2sub, sub2ind, list_multi_indexes, find_local_minima
+import pycss.sim as sim
+import pycss.css as css
 
 
 # @jit
@@ -45,7 +45,7 @@ import css
 #     return ResidualXvals, ResidualYvals
 
 
-@njit
+@jit
 def get_residual_minima(TE_s, sig, pm_init, Cm, Cp, Cf, Cr, nlparams, shape):
     """return varpro residuals as ndarray for
     different parameter value combinations defined by nlparams and shape
@@ -92,7 +92,7 @@ def get_residual_minima(TE_s, sig, pm_init, Cm, Cp, Cf, Cr, nlparams, shape):
     return params_at_minima
 
 
-@njit
+@jit
 def get_global_residual_minimum(TE_s, sig, pm_init, Cm, Cp, Cf, Cr, nlparams, shape):
 
     Pm = sim.assemble_Pm(nlparams, np.array(shape), Cp, Cf, Cr, pm_init)
@@ -109,7 +109,7 @@ def get_global_residual_minimum(TE_s, sig, pm_init, Cm, Cp, Cf, Cr, nlparams, sh
     return pm_minimum, residual_minimum
 
 
-@njit
+@jit
 def get_residual_array(TE_s, sig, pm_init, Cm, Cp, Cf, Cr, nlparams, shape):
     """return varpro residuals as ndarray
 
@@ -136,7 +136,7 @@ def get_residual_array(TE_s, sig, pm_init, Cm, Cp, Cf, Cr, nlparams, shape):
     return residual_list.reshape(shape)
 
 
-@njit
+@jit
 def list_residuals(TE_s, sig, Pm, Cm):
     """compute varpor residual for different parameter value combinations
     and return them in a 1d arrary
@@ -158,9 +158,9 @@ def list_residuals(TE_s, sig, Pm, Cm):
     return residual
 
 
-@njit
+@jit
 def get_residual(TE_s, pm, sig, Cm):
     A = css.get_Amatrix(TE_s, pm)
     P = np.diag(np.exp(1.j * pm[:, 1]))
     APCm = np.dot(np.dot(A, P), Cm.astype(A.dtype))
-    return np.linalg.norm(np.dot(1 - np.dot(APCm, np.linalg.pinv(APCm)), sig))
+    return np.linalg.norm(np.dot(np.eye(len(sig)) - np.dot(APCm, np.linalg.pinv(APCm)), sig))

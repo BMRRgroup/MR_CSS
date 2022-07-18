@@ -1,10 +1,10 @@
 import numpy as np
 import pandas as pd
 from copy import deepcopy
-import css
-import sim
+import pycss.css as css
+import pycss.sim as sim
 import pytest
-from Fatmodel import Fatmodel
+from pycss.Fatmodel import Fatmodel
 import matplotlib.pyplot as plt
 
 

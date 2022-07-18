@@ -1,7 +1,8 @@
 import pytest
 import numpy as np
 from copy import deepcopy
-import nbutils
+from pycss.nbutils import ind2sub, sub2ind, list_multi_indexes
+import pycss.nbutils as nbutils
 
 
 d = 3

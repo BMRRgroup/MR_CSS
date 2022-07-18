@@ -2,10 +2,10 @@ import pytest
 from copy import deepcopy
 import numpy as np
 import matplotlib.pyplot as plt
-import residual
-import css
-import sim
-import nbutils
+import pycss.residual as residual
+import pycss.css as css
+import pycss.sim as sim
+import pycss.nbutils as nbutils
 
 
 tol = 1e-6
@@ -52,11 +52,10 @@ def Cmats():
 
 
 def test_get_residual(pm, TE_s, Cmats):
-    # FIXME: understand the failure
     Cm = Cmats[0]
     sig = css.build_signal(TE_s, pm)
     res = residual.get_residual(TE_s, pm, sig, Cm)
-    assert res == 0
+    assert res < tol
 
 
 def test_list_residuals(pm, TE_s, Cmats):

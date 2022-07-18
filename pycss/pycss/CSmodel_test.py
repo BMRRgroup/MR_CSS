@@ -1,9 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from CSmodel import CSmodel
+from pycss.CSmodel import CSmodel
 from copy import deepcopy
-import residual
-import sim
+import pycss.residual as residual
+import pycss.sim as sim
 import pytest
 
 
@@ -59,14 +59,14 @@ def test_with_constraints_matrices(testobj):
     #                  [1]])
     m.build_signal()
     m.plot_signal()
-    plt.savefig('test.png')
+    #plt.savefig('test.png')
 
 
 def test_fixture(testobj):
     print(testobj)
     m = testobj
     m.plot_signal()
-    plt.savefig('test2.png')
+    #plt.savefig('test2.png')
 
 
 def test_normalize_amplitudes(testobj):

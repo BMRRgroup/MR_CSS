@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from copy import deepcopy
-import css
-import residual
-import sim
+import pycss.css as css
+import pycss.residual as residual
+import pycss.sim as sim
 
 # plt.style.use('ggplot')
 plt.style.use('default')

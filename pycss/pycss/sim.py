@@ -1,12 +1,12 @@
 import numpy as np
-from numba import njit, prange
-import css
-import residual
-import nbutils
+from numba import jit, njit, prange
+from numba.typed import List
+import pycss.css as css
+import pycss.residual as residual
+import pycss.nbutils as nbutils
 
 
-@njit
-def get_TE_s(nTE, TE1_s, dTE_s, nAcq=1, acq_shift=(0.5)):
+def get_TE_s(nTE, TE1_s, dTE_s, nAcq=1, acq_shift=[0.5]):
     """get 1d numpy array with echo times (TE) in seconds
 
     :param nTE: int, number of echos
@@ -26,12 +26,14 @@ def get_TE_s(nTE, TE1_s, dTE_s, nAcq=1, acq_shift=(0.5)):
 
     nShifts = len(acq_shift)
     shifts = np.zeros(nAcq - 1)
-    for i in range(nShifts):
-        shifts[i] = acq_shift[i]
+    if nAcq - 1 > 0:
+        for i in range(nShifts):
+            shifts[i] = acq_shift[i]
 
     if nShifts < nAcq - 1:
         for i in range(nShifts, nAcq - 1):
             shifts[i] = acq_shift[-1]
+
 
     for i in range(1, nAcq):
         TE_s_array[:, i] = TE_s_array[:, i-1] + shifts[i-1] * dTE_s
@@ -39,12 +41,12 @@ def get_TE_s(nTE, TE1_s, dTE_s, nAcq=1, acq_shift=(0.5)):
     return TE_s_array.ravel()
 
 
-@njit
+@jit
 def get_dTEeff_s(TE_s):
     return np.diff(TE_s)
 
 
-@njit
+@jit
 def estimate_bias(TE_s, pm_true, pm_init,
                   Cm, Cp, Cf, Cr, nlparams, shape,
                   tol, itermax):
@@ -60,7 +62,7 @@ def estimate_bias(TE_s, pm_true, pm_init,
     return pm_true - pme
 
 
-@njit
+@jit
 def assemble_Pm(nlparams, shape, Cp, Cf, Cr, pm_init):
     """create an list of parameter matrices for different parameter values
 
@@ -75,22 +77,22 @@ def assemble_Pm(nlparams, shape, Cp, Cf, Cr, pm_init):
     """
     Cm_dummy = np.zeros_like(Cp)
     M, Ntot, Nm, Np, Nf, Nr = css.get_paramsCount(Cm_dummy, Cp, Cf, Cr)
-
     params_combinations = get_params_combinations(nlparams, shape)
+
     Pm = np.zeros((params_combinations.shape[0], M, 4))
     for i in range(params_combinations.shape[0]):
         params = params_combinations[i, :]
         Pm[i, :, 1] = pm_init[:, 1] + np.dot(Cp.astype(params.dtype),
-                                             params[Nm:Nm+Np])
+                                             params[:Np])
         Pm[i, :, 2] = pm_init[:, 2] + np.dot(Cf.astype(params.dtype),
-                                             params[Nm+Np:Nm+Np+Nf])
+                                             params[Np:Np+Nf])
         Pm[i, :, 3] = pm_init[:, 3] + np.dot(Cr.astype(params.dtype),
-                                             params[Nm+Np+Nf:Nm+Np+Nf+Nr])
+                                             params[Np+Nf:Np+Nf+Nr])
 
     return Pm
 
 
-@njit
+@jit
 def get_params_combinations(nlparams, shape):
     """given a flattend list (nlparams) of parameter types and unique values
     and the information of how many unique values per parameter type (shape)
@@ -137,13 +139,13 @@ def get_params_combinations(nlparams, shape):
     return params_combinations
 
 
-@njit
+@jit
 def get_Fisher_matrix(TE_s, pm, Cm, Cp, Cf, Cr):
-    J = css.get_Jacobian(TE_s, pm, Cm, Cp, Cf, Cr)
+    J = css.get_Jacobian(TE_s, pm, Cm, Cp, Cf, Cr, pos_constraint=False)
     return np.dot(np.conjugate(J.T), J).real
 
 
-@njit
+@jit
 def get_CRB_matrix(TE_s, pm, Cm, Cp, Cf, Cr):
     F = get_Fisher_matrix(TE_s, pm, Cm, Cp, Cf, Cr)
     return np.linalg.inv(F)

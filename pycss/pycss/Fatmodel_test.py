@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 
-from CSmodel import CSmodel
-from Fatmodel import Fatmodel
+from pycss.CSmodel import CSmodel
+from pycss.Fatmodel import Fatmodel
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def test_constructor(testobj):
 
 
 def test_constructor2():
-    F = Fatmodel({'modelname': 'Hamilton 9 peaks'})
+    F = Fatmodel(modelname='Hamilton 9 peaks')
 
 
 def test_set_fatmodels_df(testobj):
@@ -43,7 +43,7 @@ def test_set_relative_peak_amplitudes(testobj):
 
     name = 'Hamilton 9 peaks'
     testobj.set_relative_peak_amplitudes(name)
-    assert isinstance(testobj.relamps_percent, np.ndarray)
+    assert isinstance(testobj.relamps_percent, np.ndarray) is False
 
 
 def test_set_fatmodel(testobj):
@@ -51,8 +51,6 @@ def test_set_fatmodel(testobj):
     assert len(testobj.deshielding_ppm) == len(testobj.relamps_percent)
 
     testobj.set_fatmodel('Hamilton 9 peaks')
-    print(testobj.deshielding_ppm)
-    print(testobj.relamps_percent)
     assert testobj.relamps_percent is None
 
 

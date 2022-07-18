@@ -3,8 +3,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from copy import deepcopy
-from pywfi.css import css
-from CSmodel import CSmodel
+# from Backend.wfi.CSS
+# from CSmodel import CSmodel
+import pycss.css as css
+from pycss.CSmodel import CSmodel
 
 
 # plt.style.use('ggplot')
@@ -69,13 +71,13 @@ class Fatmodel(CSmodel):
             return
         df = self.fatmodels_df[self.fatmodels_df['model'] == name]
         shielding_ppm = np.array([float(f)
-                                  for f in df['shielding_ppm'].as_matrix()[0]])
+                                  for f in df['shielding_ppm'].to_numpy()[0]])
         self.deshielding_ppm = shielding_ppm - self.waterPeakLocation_ppm
 
     def set_relative_peak_amplitudes(self, name):
         df = self.fatmodels_df[self.fatmodels_df['model'] == name]
         relamps_percent = np.squeeze(df['relamps_percent'])
-        if relamps_percent is not None:
+        if relamps_percent is not None and relamps_percent is not np.nan:
             relamps_percent = \
                 np.array([float(f) for f in np.squeeze(relamps_percent)])
             self.relamps_percent = relamps_percent

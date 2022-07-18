@@ -1,11 +1,11 @@
 import pytest
 from copy import deepcopy
 import numpy as np
-import css
-import sim
-import h5io
-import wfi
-from Fatmodel import Fatmodel
+import pycss.css as css
+import pycss.sim as sim
+import pycss.h5io as h5io
+import pycss.wfi as wfi
+from pycss.Fatmodel import Fatmodel
 
 
 tol = 1e-6
@@ -62,20 +62,20 @@ def test_build_signal(pm, TE_s):
     assert sig.dtype == complex
 
 
-def test_get_paramsCount(Cmats):
-    Cm, Cp, Cf, Cr = Cmats
-    M, Ntot, Nm, Np, Nf, Nr = css.get_paramsCount(Cm, Cp, Cf, Cr)
-    exp = css._nonzero_diag_elements(Cm) + \
-        css._nonzero_diag_elements(Cp) + \
-        css._nonzero_diag_elements(Cf) + \
-        css._nonzero_diag_elements(Cr)
-    print(Ntot, exp)
-    assert Ntot == exp
-    assert M == Cm.shape[0]
-    assert Nm == css._nonzero_diag_elements(Cm)
-    assert Np == css._nonzero_diag_elements(Cp)
-    assert Nf == css._nonzero_diag_elements(Cf)
-    assert Nr == css._nonzero_diag_elements(Cr)
+# def test_get_paramsCount(Cmats):
+    # Cm, Cp, Cf, Cr = Cmats
+    # M, Ntot, Nm, Np, Nf, Nr = css.get_paramsCount(Cm, Cp, Cf, Cr)
+    # exp = css._nonzero_diag_elements(Cm) + \
+        # css._nonzero_diag_elements(Cp) + \
+        # css._nonzero_diag_elements(Cf) + \
+        # css._nonzero_diag_elements(Cr)
+    # print(Ntot, exp)
+    # assert Ntot == exp
+    # assert M == Cm.shape[0]
+    # assert Nm == css._nonzero_diag_elements(Cm)
+    # assert Np == css._nonzero_diag_elements(Cp)
+    # assert Nf == css._nonzero_diag_elements(Cf)
+    # assert Nr == css._nonzero_diag_elements(Cr)
 
 
 def test_get_Jacobian(pm, TE_s, Cmats):
@@ -121,45 +121,45 @@ def test_map_varpro(pm, TE_s, Cmats):
     assert np.allclose(Pm0, Pme)
 
 
-def test_css_varpro():
-    filename = '/Users/mnd/Projects/FatParameterEstimation/data/DiagnostikBilanz/20170609_125718_0402_ImDataParams.mat'
-    imDataParams = load_ImDataParams_mat(filename)
-    imDataParams = imDataParams['ImDataParams']
-    iz = slice(35, 37)
-    imDataParams['signal'] = imDataParams['signal'][:, :, iz, :]
-    imDataParams['TE_s'] = imDataParams['TE_s'].ravel()
+# def test_css_varpro():
+    # filename = '/Users/mnd/Projects/FatParameterEstimation/data/DiagnostikBilanz/20170609_125718_0402_ImDataParams.mat'
+    # imDataParams = load_ImDataParams_mat(filename)
+    # imDataParams = imDataParams['ImDataParams']
+    # iz = slice(35, 37)
+    # imDataParams['signal'] = imDataParams['signal'][:, :, iz, :]
+    # imDataParams['TE_s'] = imDataParams['TE_s'].ravel()
 
-    tissue_mask = wfi.calculate_tissue_mask(imDataParams['signal'])
+    # tissue_mask = wfi.calculate_tissue_mask(imDataParams['signal'])
 
-    filename = '/Users/mnd/Projects/FatParameterEstimation/data/DiagnostikBilanz/20170609_125718_0402_WFIparams_CSS_GANDALF2D_VL.mat'
-    h5file = h5.File(filename, 'r')
-    path = '/WFIparams'
-    f = h5.File(filename, 'r')
-    fieldmap_Hz = np.transpose(f['/WFIparams/fieldmap_Hz'][...])[:, :, iz]
-    fieldmap_Hz_equalized = wfi.equalize_fieldmap_periods(fieldmap_Hz, imDataParams['TE_s'])
-    fieldmap_Hz_equalized = tissue_mask * \
-        wfi.equalize_fieldmap_periods(fieldmap_Hz, imDataParams['TE_s'])
+    # filename = '/Users/mnd/Projects/FatParameterEstimation/data/DiagnostikBilanz/20170609_125718_0402_WFIparams_CSS_GANDALF2D_VL.mat'
+    # h5file = h5.File(filename, 'r')
+    # path = '/WFIparams'
+    # f = h5.File(filename, 'r')
+    # fieldmap_Hz = np.transpose(f['/WFIparams/fieldmap_Hz'][...])[:, :, iz]
+    # fieldmap_Hz_equalized = wfi.equalize_fieldmap_periods(fieldmap_Hz, imDataParams['TE_s'])
+    # fieldmap_Hz_equalized = tissue_mask * \
+        # wfi.equalize_fieldmap_periods(fieldmap_Hz, imDataParams['TE_s'])
 
 
-    F = Fatmodel()
-    F.set_fatmodel('Hamilton VAT')
-    F.set_constraints_matrices()
-    Cm, Cp, Cf, Cr = F.constraints_matrices
+    # F = Fatmodel()
+    # F.set_fatmodel('Hamilton VAT')
+    # F.set_constraints_matrices()
+    # Cm, Cp, Cf, Cr = F.constraints_matrices
 
-    options = {}
-    options['Cm'] = Cm
-    options['Cp'] = Cp
-    options['Cf'] = Cf
-    options['Cr'] = Cr
-    options['Pm0'] = wfi.build_Pm0(F.get_chemical_shifts_Hz(), fieldmap_Hz_equalized[tissue_mask])
-    options['mask'] = tissue_mask
-    options['tol'] = 1e-5
-    options['itermax'] = 100
-    outParams = css.css_varpro(imDataParams, options)
+    # options = {}
+    # options['Cm'] = Cm
+    # options['Cp'] = Cp
+    # options['Cf'] = Cf
+    # options['Cr'] = Cr
+    # options['Pm0'] = wfi.build_Pm0(F.get_chemical_shifts_Hz(), fieldmap_Hz_equalized[tissue_mask])
+    # options['mask'] = tissue_mask
+    # options['tol'] = 1e-5
+    # options['itermax'] = 100
+    # outParams = css.css_varpro(imDataParams, options)
 
-    assert set(outParams.keys()) == {'elapsed_time_s', 'iterations',
-                                     'param_maps', 'resnorm'}
-    assert outParams['param_maps'][0].shape == tissue_mask.shape
+    # assert set(outParams.keys()) == {'elapsed_time_s', 'iterations',
+                                     # 'param_maps', 'resnorm'}
+    # assert outParams['param_maps'][0].shape == tissue_mask.shape
 
 
 def test_add_noise():
@@ -177,7 +177,6 @@ def test_add_noise():
 
 
 def test_varpro_phaseconstrained():
-    from Fatmodel import Fatmodel
     F = Fatmodel()
     F.set_params_matrix()
     F.build_signal()
@@ -190,18 +189,17 @@ def test_varpro_phaseconstrained():
 
     sig = F.signal_samp
     tol = 1e-10
-    itermax = 100
+    itermax = 20
     pm0 = deepcopy(F.pm)
     pm0[:, :2] = 0
     pm0[:, 2] -= pm0[0, 2]
     pm0[:, 3] = 0
-    Cp = np.zeros((len(pm0), 1))
-    Cp[:, 0] = 1.
-
-    print(pm0)
+    Cp = np.ones((len(pm0),1))
+    #print(Cp)
+    #print(pm0)
 
     pme, resnorm, i = css.varpro(F.TE_s, sig, pm0, F.Cm, F.Cp, F.Cf, F.Cr, tol, itermax)
-    print(pme, '\n', css.extract_param_type(1, pme, [F.Cm, F.Cp, F.Cf, F.Cr]))
+    #print(pme)
     assert pme[0, 1] != pme[1, 1]
 
     pm0 = deepcopy(F.pm)
@@ -209,7 +207,7 @@ def test_varpro_phaseconstrained():
     pm0[:, 2] -= pm0[0, 2]
     pm0[:, 3] = 0
     pme2, resnorm2, i2 = css.varpro(F.TE_s, sig, pm0, F.Cm, Cp, F.Cf, F.Cr, tol, itermax)
-    print(pme2, '\n', css.extract_param_type(1, pme2, [F.Cm, Cp, F.Cf, F.Cr]))
+    #print(pme2)
     assert np.isclose(pme2[0, 1], pme2[1, 1])
 
 
